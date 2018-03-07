@@ -110,3 +110,15 @@ bool verify(const string &input, const string &output) {
   return false;
 }
 
+// TODO (roughly prioritized)
+// -implement the greediest strategy
+// -implement verify
+// -implement penalty
+// -implement score (use greediest strategy as baseline)
+// -implement time check in verify
+// -other ideas:
+//    -store a list of "strategies" to run through and keep one with lowest penalty
+//    -something greedy, but with different weighting heuristics
+//    -something max flow based
+//    -something having to do with crowd alignment?
+//    -given a strategy, perturb it randomly. repeat until time runs out

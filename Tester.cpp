@@ -30,51 +30,62 @@ const int num_testcases = 1;
 
 class TestcaseGenerator {
  public:
-  TestcaseGenerator() : tDist(1, 20), pDist(1, 500), zDist(1, 20), coordDist(-10000, 10000) {
+  TestcaseGenerator() : tDist(1, 20), pDist(1, 500), zDist(1, 20), sDist(1, 10000) {
     rng.seed(seed);
   }
 
   void generate(stringstream &generated_input) {
     set<Vec> occupied_coords;
-    int T = tDist(rng);
+    int T, P, Z, S;
+    int num_attempts = 0;
+    do {
+      T = tDist(rng);
+      P = pDist(rng);
+      Z = zDist(rng);
+      S = sDist(rng);
+      ++num_attempts;
+    } while (T + P + Z > (2 * S + 1) * (2 * S + 1));
+    cout << "Picked T=" << T << ", P=" << P << ", Z=" << Z << ", S=" << S << " after " << num_attempts << " rolls" <<
+         endl;
+    uniform_int_distribution<int16_t> coord_dist(-S, S);
+
     generated_input << T << endl;
-    for (int i=0; i < T; ++i) {
-      generated_input << generateNonOccupiedCoord(occupied_coords) << endl;
+    for (int i = 0; i < T; ++i) {
+      generated_input << generateNonOccupiedCoord(occupied_coords, coord_dist) << endl;
     }
 
-    int P = pDist(rng);
     generated_input << P << endl;
-    for (int i=0; i < P; ++i) {
-      generated_input << generateNonOccupiedCoord(occupied_coords) << endl;
+    for (int i = 0; i < P; ++i) {
+      generated_input << generateNonOccupiedCoord(occupied_coords, coord_dist) << endl;
     }
 
-    int Z = zDist(rng);
     generated_input << Z << endl;
-    for (int i=0; i < Z; ++i) {
-      generated_input << generateNonOccupiedCoord(occupied_coords) << endl;
+    for (int i = 0; i < Z; ++i) {
+      generated_input << generateNonOccupiedCoord(occupied_coords, coord_dist) << endl;
     }
   }
 
  private:
-  Vec generateNonOccupiedCoord(set<Vec>& occupied_coords) {
+  Vec generateNonOccupiedCoord(set<Vec> &occupied_coords, uniform_int_distribution<int16_t> coord_dist) {
     // generate via rejection sampling samples
     // if sample space size >>>> num samples, then this is efficient
     Vec sample;
     do {
-      int16_t x = coordDist(rng);
-      int16_t y = coordDist(rng);
+      int16_t x = coord_dist(rng);
+      int16_t y = coord_dist(rng);
       sample = Vec(x, y);
-    } while(occupied_coords.find(sample) != occupied_coords.end());
+    } while (occupied_coords.find(sample) != occupied_coords.end());
     occupied_coords.insert(sample);
     return sample;
   }
+
   const uint32_t seed = 6843;
   std::mt19937 rng;
 
   uniform_int_distribution<int32_t> tDist;
   uniform_int_distribution<int32_t> pDist;
   uniform_int_distribution<int32_t> zDist;
-  uniform_int_distribution<int16_t> coordDist;
+  uniform_int_distribution<int16_t> sDist;
 };
 
 bool verify(const string &input, const string &output);
@@ -120,8 +131,8 @@ bool verify(const string &input, const string &output) {
   map<Vec, int> taxi_ids_by_coord;
   map<int, Vec> taxis_by_id;
   map<int, bool> taxi_occupied_by_id;
-  for (int i=0; i < descr.taxi_start_coords.size(); ++i) {
-    Vec& taxi = descr.taxi_start_coords[i];
+  for (int i = 0; i < descr.taxi_start_coords.size(); ++i) {
+    Vec &taxi = descr.taxi_start_coords[i];
     taxi_ids_by_coord[taxi] = i;
     taxis_by_id[i] = taxi;
     taxi_occupied_by_id[i] = false;
@@ -130,13 +141,13 @@ bool verify(const string &input, const string &output) {
   int K;
   istringstream answer(output);
   answer >> K;
-  for (int i=0; i < K; ++i) {
+  for (int i = 0; i < K; ++i) {
     string text;
     Vec displacement;
     int k;
     answer >> text >> displacement >> k;
     vector<int> ids(k);
-    for (int j=0; j < k; ++j) {
+    for (int j = 0; j < k; ++j) {
       answer >> ids[j];
     }
     set<int> displaced_ids_set(ids.begin(), ids.end());
@@ -156,12 +167,12 @@ bool verify(const string &input, const string &output) {
       }
       if (taxi_occupied_by_id[taxi_id]) {
         // occupied - check for zone
-        if(zones.find(dest) != zones.end()) {
+        if (zones.find(dest) != zones.end()) {
           taxi_occupied_by_id[taxi_id] = false;
         }
       } else {
         // unoccupied - check for passenger
-        if(pedestrians.find(dest) != pedestrians.end()) {
+        if (pedestrians.find(dest) != pedestrians.end()) {
           taxi_occupied_by_id[taxi_id] = true;
           pedestrians.erase(dest);
         }
@@ -174,7 +185,7 @@ bool verify(const string &input, const string &output) {
     return false;
   }
   for (const auto element : taxi_occupied_by_id) {
-    if(element.second) {
+    if (element.second) {
       cerr << "Some passengers are still in taxis!" << endl;
       return false;
     }
@@ -183,7 +194,6 @@ bool verify(const string &input, const string &output) {
 }
 
 // TODO (roughly prioritized)
-// -reimplement test generation correctly - use S mentioned in problem statement
 // -implement penalty
 // -implement score (use greediest strategy as baseline)
 // -implement time check in verify

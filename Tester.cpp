@@ -3,6 +3,7 @@
 #include <iostream>
 #include <sstream>
 #include <random>
+#include <utility>
 
 #define DK_LOCAL_DEVELOPMENT_BUILD
 
@@ -11,13 +12,16 @@
 #undef DK_LOCAL_DEVELOPMENT_BUILD
 
 using std::stringstream;
+using std::istringstream;
 using std::ostringstream;
 using std::ostream;
 using std::endl;
+using std::cerr;
 using std::cout;
 using std::flush;
 using std::string;
 using std::set;
+using std::tuple;
 
 using std::uniform_int_distribution;
 
@@ -31,7 +35,7 @@ class TestcaseGenerator {
   }
 
   void generate(stringstream &generated_input) {
-    set<Coord> occupied_coords;
+    set<Vec> occupied_coords;
     int T = tDist(rng);
     generated_input << T << endl;
     for (int i=0; i < T; ++i) {
@@ -52,14 +56,14 @@ class TestcaseGenerator {
   }
 
  private:
-  Coord generateNonOccupiedCoord(set<Coord>& occupied_coords) {
+  Vec generateNonOccupiedCoord(set<Vec>& occupied_coords) {
     // generate via rejection sampling samples
     // if sample space size >>>> num samples, then this is efficient
-    Coord sample;
+    Vec sample;
     do {
       int16_t x = coordDist(rng);
       int16_t y = coordDist(rng);
-      sample = Coord(x, y);
+      sample = Vec(x, y);
     } while(occupied_coords.find(sample) != occupied_coords.end());
     occupied_coords.insert(sample);
     return sample;
@@ -106,13 +110,80 @@ float computeScore(const string &output) {
 }
 
 bool verify(const string &input, const string &output) {
-  cout << input << endl;
-  return false;
+
+  istringstream iss(input);
+  Description descr(iss);
+
+  set<Vec> pedestrians(descr.pedestrian_start_coords.begin(), descr.pedestrian_start_coords.end());
+  set<Vec> zones(descr.zone_coords.begin(), descr.zone_coords.end());
+  // <current coord, original idx, is occupied>
+  map<Vec, int> taxi_ids_by_coord;
+  map<int, Vec> taxis_by_id;
+  map<int, bool> taxi_occupied_by_id;
+  for (int i=0; i < descr.taxi_start_coords.size(); ++i) {
+    Vec& taxi = descr.taxi_start_coords[i];
+    taxi_ids_by_coord[taxi] = i;
+    taxis_by_id[i] = taxi;
+    taxi_occupied_by_id[i] = false;
+  }
+
+  int K;
+  istringstream answer(output);
+  answer >> K;
+  for (int i=0; i < K; ++i) {
+    string text;
+    Vec displacement;
+    int k;
+    answer >> text >> displacement >> k;
+    vector<int> ids(k);
+    for (int j=0; j < k; ++j) {
+      answer >> ids[j];
+    }
+    set<int> displaced_ids_set(ids.begin(), ids.end());
+
+    for (int taxi_id : ids) {
+      Vec dest = taxis_by_id[taxi_id] + displacement;
+      if (!dest.inBounds()) {
+        cerr << "Out of bounds!" << endl;
+        return false;
+      }
+      if (taxi_ids_by_coord.find(dest) != taxi_ids_by_coord.end()) {
+        // ignore taxis currently in motion
+        if (displaced_ids_set.find(taxi_ids_by_coord.at(dest)) == displaced_ids_set.end()) {
+          cerr << "Taxis collide!" << endl;
+          return false;
+        }
+      }
+      if (taxi_occupied_by_id[taxi_id]) {
+        // occupied - check for zone
+        if(zones.find(dest) != zones.end()) {
+          taxi_occupied_by_id[taxi_id] = false;
+        }
+      } else {
+        // unoccupied - check for passenger
+        if(pedestrians.find(dest) != pedestrians.end()) {
+          taxi_occupied_by_id[taxi_id] = true;
+          pedestrians.erase(dest);
+        }
+      }
+      taxis_by_id[taxi_id] = dest;
+    }
+  }
+  if (!pedestrians.empty()) {
+    cerr << "Some passengers were not picked up!" << endl;
+    return false;
+  }
+  for (const auto element : taxi_occupied_by_id) {
+    if(element.second) {
+      cerr << "Some passengers are still in taxis!" << endl;
+      return false;
+    }
+  }
+  return true;
 }
 
 // TODO (roughly prioritized)
-// -implement the greediest strategy
-// -implement verify
+// -reimplement test generation correctly - use S mentioned in problem statement
 // -implement penalty
 // -implement score (use greediest strategy as baseline)
 // -implement time check in verify

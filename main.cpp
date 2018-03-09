@@ -549,7 +549,9 @@ struct Solution {
 ostream &operator<<(ostream &out, const Solution &sln) {
   out << sln.moves.size() << endl;
   for (const auto &move : sln.moves) {
-    out << move << endl;
+    if (move.displacement.normsq() > 0) {
+      out << move << endl;
+    }
   }
   return out;
 }

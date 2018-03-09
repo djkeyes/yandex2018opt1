@@ -50,17 +50,17 @@ istream &operator>>(istream &in, Solution &sln) {
 
 ostream &operator<<(ostream &out, Description &descr) {
   out << descr.taxi_start_coords.size() << endl;
-  for (const auto& coord : descr.taxi_start_coords) {
+  for (const auto &coord : descr.taxi_start_coords) {
     out << coord << endl;
   }
 
   out << descr.pedestrian_start_coords.size() << endl;
-  for (const auto& coord : descr.pedestrian_start_coords) {
+  for (const auto &coord : descr.pedestrian_start_coords) {
     out << coord << endl;
   }
 
   out << descr.zone_coords.size() << endl;
-  for (const auto& coord : descr.zone_coords) {
+  for (const auto &coord : descr.zone_coords) {
     out << coord << endl;
   }
 }
@@ -130,9 +130,9 @@ class TestcaseGenerator {
   uniform_int_distribution<int16_t> sDist;
 };
 
-bool verify(const Solution &output_sln, const Description& descr);
+bool verify(const Solution &output_sln, const Description &descr);
 
-double computeScore(const Solution &output_sln, const Description& description);
+double computeScore(const Solution &output_sln, const Description &description);
 
 int main() {
   TestcaseGenerator testgen;
@@ -161,11 +161,11 @@ int main() {
   return 0;
 }
 
-double computeScore(const Solution &output_sln, const Description& description) {
+double computeScore(const Solution &output_sln, const Description &description) {
   return output_sln.penalty(static_cast<int32_t>(description.taxi_start_coords.size()));
 }
 
-bool verify(const Solution &output_sln, const Description& descr) {
+bool verify(const Solution &output_sln, const Description &descr) {
   set<Vec> pedestrians(descr.pedestrian_start_coords.begin(), descr.pedestrian_start_coords.end());
   set<Vec> zones(descr.zone_coords.begin(), descr.zone_coords.end());
   // <current coord, original idx, is occupied>

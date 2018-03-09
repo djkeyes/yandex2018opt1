@@ -26,6 +26,27 @@ using std::tuple;
 using std::uniform_int_distribution;
 
 
+istream &operator>>(istream &in, Move &move) {
+  string text;
+  int k;
+  in >> text >> move.displacement >> k;
+  for (int j = 0; j < k; ++j) {
+    int id;
+    in >> id;
+    move.taxis.push_back(id - 1);
+  }
+  return in;
+}
+istream &operator>>(istream &in, Solution &sln) {
+  int K;
+  in >> K;
+  for (int j = 0; j < K; ++j) {
+    sln.moves.emplace_back();
+    in >> sln.moves.back();
+  }
+  return in;
+}
+
 const int num_testcases = 1;
 
 class TestcaseGenerator {
@@ -88,9 +109,9 @@ class TestcaseGenerator {
   uniform_int_distribution<int16_t> sDist;
 };
 
-bool verify(const string &input, const string &output);
+bool verify(const string &input, const Solution &output_sln);
 
-float computeScore(const string &output);
+float computeScore(const Solution &output_sln);
 
 int main() {
   TestcaseGenerator testgen;
@@ -103,11 +124,11 @@ int main() {
     //cout << "input: `" << input_copy << "`" << endl;
     stringstream output_stream;
     run(input, output_stream);
-    string output = output_stream.str();
-    //cout << "output: `" << output << "`" << endl;
+    Solution sln;
+    output_stream >> sln;
     float score = 0.0;
-    if (verify(input_copy, output)) {
-      score = computeScore(output);
+    if (verify(input_copy, sln)) {
+      score = computeScore(sln);
     }
 
     totalScore += score;
@@ -118,12 +139,11 @@ int main() {
   return 0;
 }
 
-float computeScore(const string &output) {
+float computeScore(const Solution &output_sln) {
   return 1.0;
 }
 
-bool verify(const string &input, const string &output) {
-
+bool verify(const string &input, const Solution &output_sln) {
   istringstream iss(input);
   Description descr(iss);
 
@@ -140,23 +160,12 @@ bool verify(const string &input, const string &output) {
     taxi_occupied_by_id[i] = false;
   }
 
-  int K;
-  istringstream answer(output);
-  answer >> K;
-  for (int i = 0; i < K; ++i) {
-    string text;
-    Vec displacement;
-    int k;
-    answer >> text >> displacement >> k;
-    vector<int> ids(k);
-    for (int j = 0; j < k; ++j) {
-      answer >> ids[j];
-      ids[j]--;
-    }
+  for (const Move& move : output_sln.moves) {
+    const list<int>& ids = move.taxis;
     set<int> displaced_ids_set(ids.begin(), ids.end());
 
     for (int taxi_id : ids) {
-      Vec dest = taxis_by_id[taxi_id] + displacement;
+      Vec dest = taxis_by_id[taxi_id] + move.displacement;
       if (!dest.inBounds()) {
         cerr << "Out of bounds!" << endl;
         return false;

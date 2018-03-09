@@ -68,7 +68,7 @@ struct Vec {
     return (*this - that).normsq();
   }
 
-  int32_t dist(const Vec &that) const {
+  double dist(const Vec &that) const {
     return std::sqrt(static_cast<double>(distsq(that)));
   }
 
@@ -491,44 +491,57 @@ struct Description {
   vector<Vec> taxi_start_coords;
   vector<Vec> pedestrian_start_coords;
   vector<Vec> zone_coords;
-
-  explicit Description(istream &in) {
-    int T;
-    in >> T;
-    taxi_start_coords.resize(T);
-    for (int i = 0; i < T; ++i) {
-      in >> taxi_start_coords[i];
-    }
-    int P;
-    in >> P;
-    pedestrian_start_coords.resize(P);
-    for (int i = 0; i < P; ++i) {
-      in >> pedestrian_start_coords[i];
-    }
-    int Z;
-    in >> Z;
-    zone_coords.resize(Z);
-    for (int i = 0; i < Z; ++i) {
-      in >> zone_coords[i];
-    }
-  }
 };
+
+istream &operator>>(istream &in, Description &descr) {
+  int T;
+  in >> T;
+  descr.taxi_start_coords.resize(static_cast<size_t>(T));
+  for (int i = 0; i < T; ++i) {
+    in >> descr.taxi_start_coords[i];
+  }
+  int P;
+  in >> P;
+  descr.pedestrian_start_coords.resize(static_cast<size_t>(P));
+  for (int i = 0; i < P; ++i) {
+    in >> descr.pedestrian_start_coords[i];
+  }
+  int Z;
+  in >> Z;
+  descr.zone_coords.resize(static_cast<size_t>(Z));
+  for (int i = 0; i < Z; ++i) {
+    in >> descr.zone_coords[i];
+  }
+  return in;
+}
 
 struct Move {
   Vec displacement;
   list<int> taxis;
+
+  double perMovePenalty(const int32_t num_taxis_total) const {
+    return displacement.norm() * (1.0 + static_cast<double>(taxis.size()) / num_taxis_total);
+  }
 };
 
 ostream &operator<<(ostream &out, const Move &move) {
   out << "MOVE " << move.displacement << " " << move.taxis.size();
   for (const int &taxi_idx : move.taxis) {
-    out << " " << (taxi_idx+1);
+    out << " " << (taxi_idx + 1);
   }
   return out;
 }
 
 struct Solution {
   list<Move> moves;
+
+  double penalty(const int32_t num_taxis_total) const {
+    double total = 0.0;
+    for (const Move &m : moves) {
+      total += m.perMovePenalty(num_taxis_total);
+    }
+    return total;
+  }
 };
 
 ostream &operator<<(ostream &out, const Solution &sln) {
@@ -565,7 +578,7 @@ class SimpleGreedy : public Strategy {
                                  description.pedestrian_start_coords.end());
   }
 
-  virtual Solution run() {
+  Solution run() override {
     // it's tricky to do bookkeeping for this
 
     // precompute min ped-zone dists (PZ)
@@ -594,7 +607,7 @@ class SimpleGreedy : public Strategy {
     map<Vec, Vec> closest_zones = computeClosestZones();
     while (!pedestrians_remaining.empty()) {
       set<Vec>::iterator best_ped;
-      int best_taxi_idx;
+      int best_taxi_idx = -1;
       int32_t min_dist = numeric_limits<int32_t>::max();
       for (auto ped_iter = pedestrians_remaining.begin(); ped_iter != pedestrians_remaining.end(); ++ped_iter) {
         for (int i = 0; i < current_taxis.size(); ++i) {
@@ -682,7 +695,8 @@ class SimpleGreedy : public Strategy {
 
 
 void run(istream &in, ostream &out) {
-  Description descr(in);
+  Description descr;
+  in >> descr;
 
   SimpleGreedy strat(descr);
   Solution sln = strat.run();

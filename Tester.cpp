@@ -37,6 +37,7 @@ istream &operator>>(istream &in, Move &move) {
   }
   return in;
 }
+
 istream &operator>>(istream &in, Solution &sln) {
   int K;
   in >> K;
@@ -47,6 +48,23 @@ istream &operator>>(istream &in, Solution &sln) {
   return in;
 }
 
+ostream &operator<<(ostream &out, Description &descr) {
+  out << descr.taxi_start_coords.size() << endl;
+  for (const auto& coord : descr.taxi_start_coords) {
+    out << coord << endl;
+  }
+
+  out << descr.pedestrian_start_coords.size() << endl;
+  for (const auto& coord : descr.pedestrian_start_coords) {
+    out << coord << endl;
+  }
+
+  out << descr.zone_coords.size() << endl;
+  for (const auto& coord : descr.zone_coords) {
+    out << coord << endl;
+  }
+}
+
 const int num_testcases = 1;
 
 class TestcaseGenerator {
@@ -55,7 +73,7 @@ class TestcaseGenerator {
     rng.seed(seed);
   }
 
-  void generate(stringstream &generated_input) {
+  Description generate() {
     set<Vec> occupied_coords;
     int T, P, Z, S;
     int num_attempts = 0;
@@ -70,20 +88,22 @@ class TestcaseGenerator {
          endl;
     uniform_int_distribution<int16_t> coord_dist(-S, S);
 
-    generated_input << T << endl;
+    Description descr;
+    descr.taxi_start_coords.reserve(T);
     for (int i = 0; i < T; ++i) {
-      generated_input << generateNonOccupiedCoord(occupied_coords, coord_dist) << endl;
+      descr.taxi_start_coords.push_back(generateNonOccupiedCoord(occupied_coords, coord_dist));
     }
 
-    generated_input << P << endl;
+    descr.pedestrian_start_coords.reserve(P);
     for (int i = 0; i < P; ++i) {
-      generated_input << generateNonOccupiedCoord(occupied_coords, coord_dist) << endl;
+      descr.pedestrian_start_coords.push_back(generateNonOccupiedCoord(occupied_coords, coord_dist));
     }
 
-    generated_input << Z << endl;
+    descr.zone_coords.reserve(Z);
     for (int i = 0; i < Z; ++i) {
-      generated_input << generateNonOccupiedCoord(occupied_coords, coord_dist) << endl;
+      descr.zone_coords.push_back(generateNonOccupiedCoord(occupied_coords, coord_dist));
     }
+    return descr;
   }
 
  private:
@@ -109,9 +129,9 @@ class TestcaseGenerator {
   uniform_int_distribution<int16_t> sDist;
 };
 
-bool verify(const string &input, const Solution &output_sln);
+bool verify(const Solution &output_sln, const Description& descr);
 
-float computeScore(const Solution &output_sln);
+double computeScore(const Solution &output_sln, const Description& description);
 
 int main() {
   TestcaseGenerator testgen;
@@ -119,16 +139,17 @@ int main() {
   float totalScore = 0.0;
   for (int testcase = 0; testcase < num_testcases; ++testcase) {
     stringstream input;
-    testgen.generate(input);
+    Description descr = testgen.generate();
+    input << descr;
     string input_copy = input.str();
     //cout << "input: `" << input_copy << "`" << endl;
     stringstream output_stream;
     run(input, output_stream);
     Solution sln;
     output_stream >> sln;
-    float score = 0.0;
-    if (verify(input_copy, sln)) {
-      score = computeScore(sln);
+    double score = 0.0;
+    if (verify(sln, descr)) {
+      score = computeScore(sln, descr);
     }
 
     totalScore += score;
@@ -139,14 +160,11 @@ int main() {
   return 0;
 }
 
-float computeScore(const Solution &output_sln) {
-  return 1.0;
+double computeScore(const Solution &output_sln, const Description& description) {
+  return output_sln.penalty(static_cast<int32_t>(description.taxi_start_coords.size()));
 }
 
-bool verify(const string &input, const Solution &output_sln) {
-  istringstream iss(input);
-  Description descr(iss);
-
+bool verify(const Solution &output_sln, const Description& descr) {
   set<Vec> pedestrians(descr.pedestrian_start_coords.begin(), descr.pedestrian_start_coords.end());
   set<Vec> zones(descr.zone_coords.begin(), descr.zone_coords.end());
   // <current coord, original idx, is occupied>
@@ -154,14 +172,14 @@ bool verify(const string &input, const Solution &output_sln) {
   map<int, Vec> taxis_by_id;
   map<int, bool> taxi_occupied_by_id;
   for (int i = 0; i < descr.taxi_start_coords.size(); ++i) {
-    Vec &taxi = descr.taxi_start_coords[i];
+    const Vec &taxi = descr.taxi_start_coords[i];
     taxi_ids_by_coord[taxi] = i;
     taxis_by_id[i] = taxi;
     taxi_occupied_by_id[i] = false;
   }
 
-  for (const Move& move : output_sln.moves) {
-    const list<int>& ids = move.taxis;
+  for (const Move &move : output_sln.moves) {
+    const list<int> &ids = move.taxis;
     set<int> displaced_ids_set(ids.begin(), ids.end());
 
     for (int taxi_id : ids) {

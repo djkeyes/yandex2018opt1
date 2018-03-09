@@ -75,7 +75,8 @@ class TestcaseGenerator {
 
   Description generate() {
     set<Vec> occupied_coords;
-    int T, P, Z, S;
+    int32_t T, P, Z;
+    int16_t S;
     int num_attempts = 0;
     do {
       T = tDist(rng);
@@ -89,17 +90,17 @@ class TestcaseGenerator {
     uniform_int_distribution<int16_t> coord_dist(-S, S);
 
     Description descr;
-    descr.taxi_start_coords.reserve(T);
+    descr.taxi_start_coords.reserve(static_cast<size_t>(T));
     for (int i = 0; i < T; ++i) {
       descr.taxi_start_coords.push_back(generateNonOccupiedCoord(occupied_coords, coord_dist));
     }
 
-    descr.pedestrian_start_coords.reserve(P);
+    descr.pedestrian_start_coords.reserve(static_cast<size_t>(P));
     for (int i = 0; i < P; ++i) {
       descr.pedestrian_start_coords.push_back(generateNonOccupiedCoord(occupied_coords, coord_dist));
     }
 
-    descr.zone_coords.reserve(Z);
+    descr.zone_coords.reserve(static_cast<size_t>(Z));
     for (int i = 0; i < Z; ++i) {
       descr.zone_coords.push_back(generateNonOccupiedCoord(occupied_coords, coord_dist));
     }

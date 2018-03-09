@@ -491,6 +491,8 @@ struct Description {
   vector<Vec> taxi_start_coords;
   vector<Vec> pedestrian_start_coords;
   vector<Vec> zone_coords;
+
+  Description() = default;
 };
 
 istream &operator>>(istream &in, Description &descr) {

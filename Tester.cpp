@@ -25,6 +25,109 @@ using std::tuple;
 
 using std::uniform_int_distribution;
 
+class SimpleGreedyForTest : public Strategy {
+  set<Vec> pedestrians_remaining;
+  vector<Vec> current_taxis;
+  const vector<Vec> &zones;
+
+ public:
+  explicit SimpleGreedyForTest(const Description &description) : Strategy(description), zones(description.zone_coords) {
+    current_taxis.insert(current_taxis.begin(), description.taxi_start_coords.begin(),
+                         description.taxi_start_coords.end());
+    pedestrians_remaining.insert(description.pedestrian_start_coords.begin(),
+                                 description.pedestrian_start_coords.end());
+  }
+
+  Solution run() override {
+    map<Vec, Vec> closest_zones = computeClosestZones();
+    while (!pedestrians_remaining.empty()) {
+      set<Vec>::iterator best_ped;
+      int best_taxi_idx = -1;
+      int32_t min_dist = numeric_limits<int32_t>::max();
+      for (auto ped_iter = pedestrians_remaining.begin(); ped_iter != pedestrians_remaining.end(); ++ped_iter) {
+        for (int i = 0; i < current_taxis.size(); ++i) {
+          int32_t dist = ped_iter->distsq(current_taxis[i]);
+          if (dist < min_dist) {
+            min_dist = dist;
+            best_taxi_idx = i;
+            best_ped = ped_iter;
+          }
+        }
+      }
+
+      Vec ped = *best_ped;
+      Vec &taxi = current_taxis[best_taxi_idx];
+      pedestrians_remaining.erase(best_ped);
+      Vec &target = closest_zones.at(ped);
+      moveTaxiIfOccupied(target, ped, taxi);
+      current_sln.moves.push_back({(ped - taxi), {best_taxi_idx}});
+      current_sln.moves.push_back({(target - ped), {best_taxi_idx}});
+      taxi = target;
+    }
+
+    return current_sln;
+  }
+
+ private:
+  map<Vec, Vec> computeClosestZones() {
+    map<Vec, Vec> result;
+    for (const auto &ped : pedestrians_remaining) {
+      Vec closest_zone;
+      int32_t min_dist = numeric_limits<int32_t>::max();
+      for (const auto &zone : zones) {
+        int32_t dist = ped.distsq(zone);
+        if (dist < min_dist) {
+          min_dist = dist;
+          closest_zone = zone;
+        }
+      }
+      result[ped] = closest_zone;
+    }
+    return result;
+  }
+
+  void moveTaxiIfOccupied(const Vec &zone, const Vec &ped_to_avoid, const Vec &taxi_to_ignore) {
+    int occupant;
+    if ((occupant = getTaxiOccupying(zone, taxi_to_ignore)) == -1) {
+      return;
+    }
+    for (const Vec &displacement : first_100_coords_incr_mag) {
+      Vec target = zone + displacement;
+      if (!target.inBounds()) {
+        continue;
+      }
+      if (getTaxiOccupying(target) == -1) {
+        current_taxis[occupant] = target;
+        current_sln.moves.push_back({displacement, {occupant}});
+        break;
+      }
+    }
+  }
+
+  int getTaxiOccupying(const Vec &zone, const Vec &taxi_to_ignore) {
+    for (int i = 0; i < current_taxis.size(); ++i) {
+      if (current_taxis[i] == taxi_to_ignore) {
+        continue;
+      }
+      if (current_taxis[i] == zone) {
+        return i;
+      }
+    }
+    return -1;
+  }
+
+  int getTaxiOccupying(const Vec &zone) {
+    for (int i = 0; i < current_taxis.size(); ++i) {
+      if (current_taxis[i] == zone) {
+        return i;
+      }
+    }
+    return -1;
+  }
+
+  Solution current_sln;
+};
+
 
 istream &operator>>(istream &in, Move &move) {
   string text;
@@ -162,7 +265,15 @@ int main() {
 }
 
 double computeScore(const Solution &output_sln, const Description &description) {
-  return output_sln.penalty(static_cast<int32_t>(description.taxi_start_coords.size()));
+  double penalty = output_sln.penalty(static_cast<int32_t>(description.taxi_start_coords.size()));
+
+  // I submitted this and it got 5161.31pts
+  // ergo the true threshold is roughly 0.516131 * simple greedy penalty
+  SimpleGreedyForTest baseline(description);
+  double simply_greedy_penalty = baseline.run().penalty(static_cast<int32_t>(description.taxi_start_coords.size()));
+  double threshold = 0.516131 * simply_greedy_penalty;
+
+  return threshold / penalty * 10000;
 }
 
 bool verify(const Solution &output_sln, const Description &descr) {
@@ -225,8 +336,6 @@ bool verify(const Solution &output_sln, const Description &descr) {
 }
 
 // TODO (roughly prioritized)
-// -implement penalty
-// -implement score (use greediest strategy as baseline)
 // -implement time check in verify
 // -other ideas:
 //    -store a list of "strategies" to run through and keep one with lowest penalty

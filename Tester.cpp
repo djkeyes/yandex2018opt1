@@ -100,9 +100,11 @@ int main() {
     stringstream input;
     testgen.generate(input);
     string input_copy = input.str();
+    //cout << "input: `" << input_copy << "`" << endl;
     stringstream output_stream;
     run(input, output_stream);
     string output = output_stream.str();
+    //cout << "output: `" << output << "`" << endl;
     float score = 0.0;
     if (verify(input_copy, output)) {
       score = computeScore(output);
@@ -117,7 +119,7 @@ int main() {
 }
 
 float computeScore(const string &output) {
-  return 0;
+  return 1.0;
 }
 
 bool verify(const string &input, const string &output) {
@@ -149,6 +151,7 @@ bool verify(const string &input, const string &output) {
     vector<int> ids(k);
     for (int j = 0; j < k; ++j) {
       answer >> ids[j];
+      ids[j]--;
     }
     set<int> displaced_ids_set(ids.begin(), ids.end());
 

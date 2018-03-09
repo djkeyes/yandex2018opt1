@@ -522,7 +522,7 @@ struct Move {
 ostream &operator<<(ostream &out, const Move &move) {
   out << "MOVE " << move.displacement << " " << move.taxis.size();
   for (const int &taxi_idx : move.taxis) {
-    out << " " << taxi_idx;
+    out << " " << (taxi_idx+1);
   }
   return out;
 }

@@ -33,14 +33,17 @@ class SimpleGreedyForTest : public Strategy {
   const vector<Vec> &zones;
 
  public:
-  explicit SimpleGreedyForTest(const Description &description) : Strategy(description), zones(description.zone_coords) {
+  explicit SimpleGreedyForTest(const Description &description)
+      : Strategy(description),
+        zones(description.zone_coords),
+        currentSln(new Solution()) {
     current_taxis.insert(current_taxis.begin(), description.taxi_start_coords.begin(),
                          description.taxi_start_coords.end());
     pedestrians_remaining.insert(description.pedestrian_start_coords.begin(),
                                  description.pedestrian_start_coords.end());
   }
 
-  Solution run() override {
+  unique_ptr<Solution> runIncremental() override {
     map<Vec, Vec> closest_zones = computeClosestZones();
     while (!pedestrians_remaining.empty()) {
       set<Vec>::iterator best_ped;
@@ -62,12 +65,12 @@ class SimpleGreedyForTest : public Strategy {
       pedestrians_remaining.erase(best_ped);
       Vec &target = closest_zones.at(ped);
       moveTaxiIfOccupied(target, ped, taxi);
-      current_sln.moves.push_back({(ped - taxi), {best_taxi_idx}});
-      current_sln.moves.push_back({(target - ped), {best_taxi_idx}});
+      currentSln->moves.push_back({(ped - taxi), {best_taxi_idx}});
+      currentSln->moves.push_back({(target - ped), {best_taxi_idx}});
       taxi = target;
     }
 
-    return current_sln;
+    return move(currentSln);
   }
 
  private:
@@ -100,7 +103,7 @@ class SimpleGreedyForTest : public Strategy {
       }
       if (getTaxiOccupying(target) == -1) {
         current_taxis[occupant] = target;
-        current_sln.moves.push_back({displacement, {occupant}});
+        currentSln->moves.push_back({displacement, {occupant}});
         break;
       }
     }
@@ -127,7 +130,7 @@ class SimpleGreedyForTest : public Strategy {
     return -1;
   }
 
-  Solution current_sln;
+  unique_ptr<Solution> currentSln;
 };
 
 

@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <iterator>
 #include <memory>
+#include <chrono>
 
 using std::istream;
 using std::ostream;
@@ -580,7 +581,15 @@ class Strategy {
 
   virtual ~Strategy() = default;
 
-  virtual Solution run() = 0;
+  Solution run() {
+    unique_ptr<Solution> sln;
+    while (sln == nullptr) {
+      sln = runIncremental();
+    }
+    return *sln;
+  }
+
+  virtual unique_ptr<Solution> runIncremental() = 0;
 };
 
 class SimpleGreedy : public Strategy {
@@ -589,14 +598,16 @@ class SimpleGreedy : public Strategy {
   const vector<Vec> &zones;
 
  public:
-  explicit SimpleGreedy(const Description &description) : Strategy(description), zones(description.zone_coords) {
+  explicit SimpleGreedy(const Description &description) : Strategy(description), zones(description.zone_coords),
+                                                          currentSln(new Solution()) {
     current_taxis.insert(current_taxis.begin(), description.taxi_start_coords.begin(),
                          description.taxi_start_coords.end());
     pedestrians_remaining.insert(description.pedestrian_start_coords.begin(),
                                  description.pedestrian_start_coords.end());
+    closestZones = computeClosestZones();
   }
 
-  Solution run() override {
+  unique_ptr<Solution> runIncremental() override {
     // it's tricky to do bookkeeping for this
 
     // precompute min ped-zone dists (PZ)
@@ -622,8 +633,7 @@ class SimpleGreedy : public Strategy {
 
 
     // dumb way:
-    map<Vec, Vec> closest_zones = computeClosestZones();
-    while (!pedestrians_remaining.empty()) {
+    if (!pedestrians_remaining.empty()) {
       set<Vec>::iterator best_ped;
       int best_taxi_idx = -1;
       int32_t min_dist = numeric_limits<int32_t>::max();
@@ -641,17 +651,24 @@ class SimpleGreedy : public Strategy {
       Vec ped = *best_ped;
       Vec &taxi = current_taxis[best_taxi_idx];
       pedestrians_remaining.erase(best_ped);
-      Vec &target = closest_zones.at(ped);
+      Vec &target = closestZones.at(ped);
       moveTaxiIfOccupied(target, ped, taxi);
-      current_sln.moves.push_back({(ped - taxi), {best_taxi_idx}});
-      current_sln.moves.push_back({(target - ped), {best_taxi_idx}});
+      currentSln->moves.push_back({(ped - taxi), {best_taxi_idx}});
+      currentSln->moves.push_back({(target - ped), {best_taxi_idx}});
       taxi = target;
+
     }
 
-    return current_sln;
+    if (!pedestrians_remaining.empty()) {
+      return unique_ptr<Solution>(nullptr);
+    } else {
+      return std::move(currentSln);
+    }
   }
 
  private:
+  map<Vec, Vec> closestZones;
+
   map<Vec, Vec> computeClosestZones() {
     map<Vec, Vec> result;
     for (const auto &ped : pedestrians_remaining) {
@@ -681,7 +698,7 @@ class SimpleGreedy : public Strategy {
       }
       if (getTaxiOccupying(target) == -1) {
         current_taxis[occupant] = target;
-        current_sln.moves.push_back({displacement, {occupant}});
+        currentSln->moves.push_back({displacement, {occupant}});
         break;
       }
     }
@@ -708,7 +725,7 @@ class SimpleGreedy : public Strategy {
     return -1;
   }
 
-  Solution current_sln;
+  unique_ptr<Solution> currentSln;
 };
 
 struct Cost {
@@ -732,9 +749,8 @@ class GreedyGroups : public Strategy {
   int numClosestTargets;
 
  public:
-  explicit GreedyGroups(const Description &description, int num_closest_targets) : Strategy(description),
-                                                                                   numClosestTargets(
-                                                                                       num_closest_targets) {
+  explicit GreedyGroups(const Description &description, int num_closest_targets)
+      : Strategy(description), numClosestTargets(num_closest_targets), currentSln(new Solution()) {
     pedestrians_remaining.insert(description.pedestrian_start_coords.begin(),
                                  description.pedestrian_start_coords.end());
     zones.insert(description.zone_coords.begin(),
@@ -745,8 +761,8 @@ class GreedyGroups : public Strategy {
     }
   }
 
-  Solution run() override {
-    while (numPedestriansLeft() > 0) {
+  unique_ptr<Solution> runIncremental() override {
+    if (numPedestriansLeft() > 0) {
       map<int, list<pair<Vec, Cost>>> targets = computeClosestZones();
 
       Vec best_displacement;
@@ -811,8 +827,8 @@ class GreedyGroups : public Strategy {
       moveTaxisOutOfWay(taxis_to_move, best_displacement);
 
       // execute move
-      current_sln.moves.emplace_back();
-      Move &big_move = current_sln.moves.back();
+      currentSln->moves.emplace_back();
+      Move &big_move = currentSln->moves.back();
       big_move.displacement = best_displacement;
       big_move.taxis.insert(big_move.taxis.end(), taxis_to_move.begin(), taxis_to_move.end());
       for (int id : taxis_to_move) {
@@ -821,7 +837,11 @@ class GreedyGroups : public Strategy {
       }
     }
 
-    return current_sln;
+    if (numPedestriansLeft() > 0) {
+      return unique_ptr<Solution>(nullptr);
+    } else {
+      return std::move(currentSln);
+    }
   }
 
  private:
@@ -863,7 +883,7 @@ class GreedyGroups : public Strategy {
           stationary_taxis.erase(iter);
           stationary_taxis[target] = blocking_taxi;
           taxis[blocking_taxi].loc = target;
-          current_sln.moves.push_back({d, {blocking_taxi}});
+          currentSln->moves.push_back({d, {blocking_taxi}});
 
           // update unintentional checkpoints
           updateTaxiCheckpoints(taxis[blocking_taxi]);
@@ -931,35 +951,54 @@ class GreedyGroups : public Strategy {
     return result;
   }
 
-  Solution current_sln;
+  unique_ptr<Solution> currentSln;
 };
 
 class CombinedStrategy : public Strategy {
  public:
-  CombinedStrategy(const Description &description, const list<function<unique_ptr<Strategy>()>>& strategy_generator)
-      : Strategy(description), strategies(strategy_generator) {}
+  CombinedStrategy(const Description &description, const list<function<unique_ptr<Strategy>()>> &strategy_generator)
+      : Strategy(description), strategies(strategy_generator), startTime(std::chrono::steady_clock::now()) {
+  }
 
   // evaluate several strategies and choose the best one
-  // even better:
-  // ...if we were allowed threads (are we?), we could even run a timer and interrupt the execution when time is out.
-
-  Solution run() override {
-    Solution best_solution;
+  // this implemention of runIncremental actually runs the whole thing, so don't nest instances of CombinedStrategy
+  unique_ptr<Solution> runIncremental() override {
+    unique_ptr<Solution> best_solution(nullptr);
     double lowest_penalty = numeric_limits<double>::max();
-    for (const auto& gen : strategies) {
+    for (const auto &gen : strategies) {
       unique_ptr<Strategy> strat = gen();
-      Solution cur_solution = strat->run();
-      double cur_penalty = cur_solution.penalty(description.taxi_start_coords.size());
-      if (cur_penalty < lowest_penalty) {
-        lowest_penalty = cur_penalty;
-        std::swap(best_solution, cur_solution);
+
+      unique_ptr<Solution> cur_solution;
+      while (cur_solution == nullptr) {
+        if (needToTerminate()) {
+          break;
+        }
+        cur_solution = strat->runIncremental();
+      }
+      if (cur_solution != nullptr) {
+        double cur_penalty = cur_solution->penalty(description.taxi_start_coords.size());
+        if (cur_penalty < lowest_penalty) {
+          lowest_penalty = cur_penalty;
+          std::swap(best_solution, cur_solution);
+        }
+      }
+      if (needToTerminate()) {
+        break;
       }
     }
     return best_solution;
   }
 
  private:
-  const list<function<unique_ptr<Strategy>()>>& strategies;
+  const list<function<unique_ptr<Strategy>()>> &strategies;
+
+  std::chrono::time_point<std::chrono::steady_clock> startTime;
+
+  bool needToTerminate() {
+    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>
+        (std::chrono::steady_clock::now() - startTime);
+    return elapsed.count() > 1800;
+  }
 };
 
 void run(istream &in, ostream &out) {
@@ -967,12 +1006,16 @@ void run(istream &in, ostream &out) {
   in >> descr;
 
   list<function<unique_ptr<Strategy>()>> strategy_generators = {
-      [&](){return unique_ptr<Strategy>(new SimpleGreedy(descr));},
-      [&](){return unique_ptr<Strategy>(new GreedyGroups(descr, 1));},
-      [&](){return unique_ptr<Strategy>(new GreedyGroups(descr, 2));},
-      [&](){return unique_ptr<Strategy>(new GreedyGroups(descr, 3));},
-      [&](){return unique_ptr<Strategy>(new GreedyGroups(descr, 4));},
-      [&](){return unique_ptr<Strategy>(new GreedyGroups(descr, 5));},
+      [&]() { return unique_ptr<Strategy>(new SimpleGreedy(descr)); },
+      [&]() { return unique_ptr<Strategy>(new GreedyGroups(descr, 1)); },
+      [&]() { return unique_ptr<Strategy>(new GreedyGroups(descr, 2)); },
+      [&]() { return unique_ptr<Strategy>(new GreedyGroups(descr, 3)); },
+      [&]() { return unique_ptr<Strategy>(new GreedyGroups(descr, 4)); },
+      [&]() { return unique_ptr<Strategy>(new GreedyGroups(descr, 5)); },
+      [&]() { return unique_ptr<Strategy>(new GreedyGroups(descr, 10)); },
+      [&]() { return unique_ptr<Strategy>(new GreedyGroups(descr, 20)); },
+      [&]() { return unique_ptr<Strategy>(new GreedyGroups(descr, 15)); },
+      [&]() { return unique_ptr<Strategy>(new GreedyGroups(descr, 40)); },
   };
   CombinedStrategy strat(descr, strategy_generators);
   Solution sln = strat.run();

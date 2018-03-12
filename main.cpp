@@ -997,7 +997,7 @@ class CombinedStrategy : public Strategy {
   bool needToTerminate() {
     auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>
         (std::chrono::steady_clock::now() - startTime);
-    return elapsed.count() > 1800;
+    return elapsed.count() > 1900;
   }
 };
 

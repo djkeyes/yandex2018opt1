@@ -22,6 +22,8 @@ using std::flush;
 using std::string;
 using std::set;
 using std::tuple;
+using std::make_tuple;
+using std::get;
 
 using std::uniform_int_distribution;
 
@@ -168,7 +170,7 @@ ostream &operator<<(ostream &out, Description &descr) {
   }
 }
 
-const int num_testcases = 1;
+const int num_testcases = 30;
 
 class TestcaseGenerator {
  public:
@@ -177,7 +179,6 @@ class TestcaseGenerator {
   }
 
   Description generate() {
-    set<Vec> occupied_coords;
     int32_t T, P, Z;
     int16_t S;
     int num_attempts = 0;
@@ -190,6 +191,11 @@ class TestcaseGenerator {
     } while (T + P + Z > (2 * S + 1) * (2 * S + 1));
     cout << "Picked T=" << T << ", P=" << P << ", Z=" << Z << ", S=" << S << " after " << num_attempts << " rolls" <<
          endl;
+    return generate(T, P, Z, S);
+  }
+
+  Description generate(int32_t T, int32_t P, int32_t Z, int16_t S) {
+    set<Vec> occupied_coords;
     uniform_int_distribution<int16_t> coord_dist(-S, S);
 
     Description descr;
@@ -240,10 +246,25 @@ double computeScore(const Solution &output_sln, const Description &description);
 int main() {
   TestcaseGenerator testgen;
 
+  vector<tuple<int32_t, int32_t, int32_t, int16_t>> edge_case_generate_args
+      = {
+          make_tuple(7, 1, 1, 1),
+          make_tuple(1, 1, 7, 1),
+          make_tuple(1, 7, 1, 1),
+          make_tuple(1, 1, 1, 1),
+          make_tuple(5, 15, 5, 2),
+      };
+
   float totalScore = 0.0;
-  for (int testcase = 0; testcase < num_testcases; ++testcase) {
+  for (size_t testcase = 0; testcase < num_testcases; ++testcase) {
     stringstream input;
-    Description descr = testgen.generate();
+    Description descr;
+    if (testcase < edge_case_generate_args.size()) {
+      auto &arguments = edge_case_generate_args[testcase];
+      descr = testgen.generate(get<0>(arguments), get<1>(arguments), get<2>(arguments), get<3>(arguments));
+    } else {
+      descr = testgen.generate();
+    }
     input << descr;
     string input_copy = input.str();
     //cout << "input: `" << input_copy << "`" << endl;
@@ -319,6 +340,8 @@ bool verify(const Solution &output_sln, const Description &descr) {
           pedestrians.erase(dest);
         }
       }
+      taxi_ids_by_coord.erase(taxis_by_id[taxi_id]);
+      taxi_ids_by_coord[dest] = taxi_id;
       taxis_by_id[taxi_id] = dest;
     }
   }
@@ -336,10 +359,12 @@ bool verify(const Solution &output_sln, const Description &descr) {
 }
 
 // TODO (roughly prioritized)
-// -implement time check in verify
+// -implement tougher edge case tests, ie (2*S+1) = T + P + Z
 // -other ideas:
 //    -store a list of "strategies" to run through and keep one with lowest penalty
 //    -something greedy, but with different weighting heuristics
 //    -something max flow based
 //    -something having to do with crowd alignment?
 //    -given a strategy, perturb it randomly. repeat until time runs out
+//    -find a matrix decomposition? we want to find a minimal set of 2d vectors approximating the ped-zone displacements
+// -implement time check in verify

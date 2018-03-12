@@ -5,6 +5,10 @@
 #include <cmath>
 #include <limits>
 #include <map>
+#include <queue>
+#include <algorithm>
+#include <iterator>
+#include <memory>
 
 using std::istream;
 using std::ostream;
@@ -13,7 +17,17 @@ using std::vector;
 using std::list;
 using std::set;
 using std::map;
+using std::pair;
 using std::numeric_limits;
+using std::priority_queue;
+using std::unique_ptr;
+using std::function;
+
+template<typename U, typename V>
+ostream &operator<<(ostream &out, const pair<U, V> &p) {
+  out << "(" << p.first << " " << p.second << ")";
+  return out;
+};
 
 struct Vec {
   int16_t x, y;
@@ -697,12 +711,270 @@ class SimpleGreedy : public Strategy {
   Solution current_sln;
 };
 
+struct Cost {
+  double fixed, variable;
+};
+
+ostream &operator<<(ostream &out, const Cost c) {
+  out << "{Cost=" << c.fixed << "+" << c.variable << "k}";
+  return out;
+}
+
+class GreedyGroups : public Strategy {
+  set<Vec> pedestrians_remaining;
+  struct Taxi {
+    bool occupied;
+    int id;
+    Vec loc;
+  };
+  vector<Taxi> taxis;
+  set<Vec> zones;
+  int numClosestTargets;
+
+ public:
+  explicit GreedyGroups(const Description &description, int num_closest_targets) : Strategy(description),
+                                                                                   numClosestTargets(
+                                                                                       num_closest_targets) {
+    pedestrians_remaining.insert(description.pedestrian_start_coords.begin(),
+                                 description.pedestrian_start_coords.end());
+    zones.insert(description.zone_coords.begin(),
+                 description.zone_coords.end());
+    for (int i = 0; static_cast<size_t>(i) < description.taxi_start_coords.size(); ++i) {
+      Taxi t = {false, i, description.taxi_start_coords[i]};
+      taxis.emplace_back(t);
+    }
+  }
+
+  Solution run() override {
+    while (numPedestriansLeft() > 0) {
+      map<int, list<pair<Vec, Cost>>> targets = computeClosestZones();
+
+      Vec best_displacement;
+      double most_penalty_reduced = numeric_limits<double>::lowest();
+      list<int> taxis_with_positive_reduction;
+
+      for (int id = 0; id < targets.size(); ++id) {
+        if (targets[id].empty()) {
+          continue;
+        }
+        Cost &base_cost = targets[id].front().second;
+        // the best move is to go straight to the closest pedestrian
+        for (const auto &path : targets[id]) {
+          list<int> cur_valid_taxis;
+          cur_valid_taxis.push_back(id);
+          // anything other than the closest pedestrian gives more penalty
+          double penalty_reduced = base_cost.fixed + base_cost.variable - path.second.fixed - path.second.variable;
+          Vec displacement = path.first - taxis[id].loc;
+          for (int otherid = 0; otherid < targets.size(); ++otherid) {
+            if (id == otherid) {
+              continue;
+            }
+            if (targets[otherid].empty()) {
+              continue;
+            }
+            Cost &other_shortest_cost = targets[otherid].front().second;
+            // before the easiest cost was this
+            double other_baseline = other_shortest_cost.variable + other_shortest_cost.fixed;
+
+            Vec where_other_ends_up = taxis[otherid].loc + displacement;
+            if (!where_other_ends_up.inBounds()) {
+              continue;
+            }
+
+            double max_reduction_for_other = numeric_limits<double>::lowest();
+            for (const auto &otherpath : targets[otherid]) {
+              // now we pay the path variable cost, plus the full cost to actually reach our destination
+              double alternative_cost =
+                  path.second.variable + where_other_ends_up.dist(otherpath.first) * (1. + 1. / taxis.size());
+              double reduction = other_baseline - alternative_cost;
+              max_reduction_for_other = std::max(max_reduction_for_other, reduction);
+            }
+            if (max_reduction_for_other >= 0) {
+              cur_valid_taxis.push_back(otherid);
+            }
+            penalty_reduced += max_reduction_for_other;
+          }
+          if (penalty_reduced > most_penalty_reduced) {
+            best_displacement = displacement;
+            most_penalty_reduced = penalty_reduced;
+            taxis_with_positive_reduction = move(cur_valid_taxis);
+          }
+        }
+      }
+
+      // TODO: dedup the taxi destinations. this is a little important when taking taxis to zones (can always re-use
+      // a zone), but especially important when when taking taxis to pedestrians and P < T (no need to send 20 to one
+      // guy).
+
+      set<int> taxis_to_move(taxis_with_positive_reduction.begin(), taxis_with_positive_reduction.end());
+
+      moveTaxisOutOfWay(taxis_to_move, best_displacement);
+
+      // execute move
+      current_sln.moves.emplace_back();
+      Move &big_move = current_sln.moves.back();
+      big_move.displacement = best_displacement;
+      big_move.taxis.insert(big_move.taxis.end(), taxis_to_move.begin(), taxis_to_move.end());
+      for (int id : taxis_to_move) {
+        taxis[id].loc += best_displacement;
+        updateTaxiCheckpoints(taxis[id]);
+      }
+    }
+
+    return current_sln;
+  }
+
+ private:
+
+  void moveTaxisOutOfWay(const set<int> &moving_taxis, const Vec &displacement) {
+    set<Vec> taxi_dests;
+    set<Vec> taxi_srcs;
+    for (int id : moving_taxis) {
+      taxi_dests.insert(taxis[id].loc + displacement);
+      taxi_srcs.insert(taxis[id].loc);
+    }
+    map<Vec, int> stationary_taxis;
+    for (const Taxi &t : taxis) {
+      if (moving_taxis.find(t.id) == moving_taxis.end()) {
+        stationary_taxis.emplace(t.loc, t.id);
+      }
+    }
+
+    for (const Vec &dest : taxi_dests) {
+      auto iter = stationary_taxis.find(dest);
+      if (iter != stationary_taxis.end()) {
+        int blocking_taxi = iter->second;
+        for (const Vec &d : first_100_coords_incr_mag) {
+          Vec target = dest + d;
+          if (!target.inBounds()) {
+            continue;
+          }
+          if (stationary_taxis.find(target) != stationary_taxis.end()) {
+            continue;
+          }
+          if (taxi_dests.find(target) != taxi_dests.end()) {
+            continue;
+          }
+          if (taxi_srcs.find(target) != taxi_srcs.end()) {
+            continue;
+          }
+          // this is a good target.
+          // perform move, and update stationary_taxis
+          stationary_taxis.erase(iter);
+          stationary_taxis[target] = blocking_taxi;
+          taxis[blocking_taxi].loc = target;
+          current_sln.moves.push_back({d, {blocking_taxi}});
+
+          // update unintentional checkpoints
+          updateTaxiCheckpoints(taxis[blocking_taxi]);
+          break;
+        }
+      }
+    }
+  }
+
+  /*
+   * Updates the pedestrian locations / taxi occupancy after a taxi's location has been updated
+   */
+  void updateTaxiCheckpoints(Taxi &t) {
+    if (t.occupied) {
+      if (zones.find(t.loc) != zones.end()) {
+        t.occupied = false;
+      }
+    } else {
+      auto ped_iter = pedestrians_remaining.find(t.loc);
+      if (ped_iter != pedestrians_remaining.end()) {
+        pedestrians_remaining.erase(ped_iter);
+        t.occupied = true;
+      }
+    }
+  }
+
+  int numPedestriansLeft() {
+    auto total = static_cast<int>(pedestrians_remaining.size());
+    for (const Taxi &t : taxis) {
+      total += t.occupied;
+    }
+    return total;
+  }
+
+  map<int, list<pair<Vec, Cost>>> computeClosestZones() {
+    // for each taxi, computes the closest numClosestTargets targets. For occupied taxis, targets are zones
+    // (potentially few); for unoccupied, targets are pedestrians (potentially many).
+    map<int, list<pair<Vec, Cost>>> result;
+    for (const auto &taxi : taxis) {
+      auto &closest = result[taxi.id];
+
+      set<Vec> *targets;
+      if (taxi.occupied) {
+        targets = &zones;
+      } else {
+        targets = &pedestrians_remaining;
+      }
+      using DistVec = pair<int32_t, Vec>;
+      priority_queue<DistVec> heap;
+      for (const auto &target : *targets) {
+        int32_t dist = taxi.loc.distsq(target);
+        heap.emplace(dist, target);
+        if (heap.size() > numClosestTargets) {
+          heap.pop();
+        }
+      }
+      while (!heap.empty()) {
+        auto &top = heap.top();
+        double dist = sqrt(static_cast<double>(top.first));
+        Cost c = {dist, dist / taxis.size()};
+        closest.emplace_front(top.second, c);
+        heap.pop();
+      }
+    }
+    return result;
+  }
+
+  Solution current_sln;
+};
+
+class CombinedStrategy : public Strategy {
+ public:
+  CombinedStrategy(const Description &description, const list<function<unique_ptr<Strategy>()>>& strategy_generator)
+      : Strategy(description), strategies(strategy_generator) {}
+
+  // evaluate several strategies and choose the best one
+  // even better:
+  // ...if we were allowed threads (are we?), we could even run a timer and interrupt the execution when time is out.
+
+  Solution run() override {
+    Solution best_solution;
+    double lowest_penalty = numeric_limits<double>::max();
+    for (const auto& gen : strategies) {
+      unique_ptr<Strategy> strat = gen();
+      Solution cur_solution = strat->run();
+      double cur_penalty = cur_solution.penalty(description.taxi_start_coords.size());
+      if (cur_penalty < lowest_penalty) {
+        lowest_penalty = cur_penalty;
+        std::swap(best_solution, cur_solution);
+      }
+    }
+    return best_solution;
+  }
+
+ private:
+  const list<function<unique_ptr<Strategy>()>>& strategies;
+};
 
 void run(istream &in, ostream &out) {
   Description descr;
   in >> descr;
 
-  SimpleGreedy strat(descr);
+  list<function<unique_ptr<Strategy>()>> strategy_generators = {
+      [&](){return unique_ptr<Strategy>(new SimpleGreedy(descr));},
+      [&](){return unique_ptr<Strategy>(new GreedyGroups(descr, 1));},
+      [&](){return unique_ptr<Strategy>(new GreedyGroups(descr, 2));},
+      [&](){return unique_ptr<Strategy>(new GreedyGroups(descr, 3));},
+      [&](){return unique_ptr<Strategy>(new GreedyGroups(descr, 4));},
+      [&](){return unique_ptr<Strategy>(new GreedyGroups(descr, 5));},
+  };
+  CombinedStrategy strat(descr, strategy_generators);
   Solution sln = strat.run();
   out << sln << endl;
 }

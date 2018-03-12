@@ -976,7 +976,7 @@ class CombinedStrategy : public Strategy {
         cur_solution = strat->runIncremental();
       }
       if (cur_solution != nullptr) {
-        double cur_penalty = cur_solution->penalty(description.taxi_start_coords.size());
+        double cur_penalty = cur_solution->penalty(static_cast<int32_t>(description.taxi_start_coords.size()));
         if (cur_penalty < lowest_penalty) {
           lowest_penalty = cur_penalty;
           std::swap(best_solution, cur_solution);

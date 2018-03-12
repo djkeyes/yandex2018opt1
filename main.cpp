@@ -763,7 +763,7 @@ class GreedyGroups : public Strategy {
 
   unique_ptr<Solution> runIncremental() override {
     if (numPedestriansLeft() > 0) {
-      map<int, list<pair<Vec, Cost>>> targets = computeClosestZones();
+      map<int, vector<pair<Vec, Cost>>> targets = computeClosestZones();
 
       Vec best_displacement;
       double most_penalty_reduced = numeric_limits<double>::lowest();
@@ -781,35 +781,142 @@ class GreedyGroups : public Strategy {
           // anything other than the closest pedestrian gives more penalty
           double penalty_reduced = base_cost.fixed + base_cost.variable - path.second.fixed - path.second.variable;
           Vec displacement = path.first - taxis[id].loc;
-          for (int otherid = 0; otherid < targets.size(); ++otherid) {
+
+          map<int, size_t> assignments;
+          map<Vec, list<int>> assignments_to_taxis;
+          vector<Vec> displaced_locs(taxis.size());
+          vector<double> baselines(taxis.size());
+          vector<vector<double>> alternative_costs(taxis.size());
+          for (size_t otherid = 0; otherid < displaced_locs.size(); ++otherid) {
             if (id == otherid) {
               continue;
             }
+            displaced_locs[otherid] = taxis[otherid].loc + displacement;
             if (targets[otherid].empty()) {
               continue;
             }
-            Cost &other_shortest_cost = targets[otherid].front().second;
-            // before the easiest cost was this
-            double other_baseline = other_shortest_cost.variable + other_shortest_cost.fixed;
+            Cost &shortest_cost = targets[otherid].front().second;
+            baselines[otherid] = shortest_cost.variable + shortest_cost.fixed;
 
-            Vec where_other_ends_up = taxis[otherid].loc + displacement;
-            if (!where_other_ends_up.inBounds()) {
+            alternative_costs[otherid].reserve(targets[otherid].size());
+            for (const auto otherpath : targets[otherid]) {
+              double cost = path.second.variable
+                            + displaced_locs[otherid].dist(otherpath.first) * (1. + 1. / taxis.size());
+              alternative_costs[otherid].push_back(cost);
+            }
+          }
+          vector<bool> has_assignment(taxis.size(), false);
+          vector<bool> is_improved(taxis.size(), false);
+
+          set<Vec> deduped_target;
+          set<int> deduped_taxi;
+
+          int times_to_dedup = taxis.size() > pedestrians_remaining.size() ? 20 : 0;
+          for (int num_dedups = 0; num_dedups < times_to_dedup + 1; ++num_dedups) {
+            // for dedups, we don't really care about reducing the penalty (covering long distances in fewer trips)
+            // instead, we care about transporting the one car who's closest.
+            if (num_dedups > 0) {
+              // deduplicate old assignments
+              bool any_deduped = false;
+              for (auto &assignment : assignments_to_taxis) {
+                std::cout << assignment.second.size() << endl;
+                if (assignment.second.size() > 1) {
+                  any_deduped = true;
+                  // just assign the closest taxi
+                  int closesttaxi = -1;
+                  int32_t closest_taxi_dist = numeric_limits<int32_t>::max();
+                  for (int taxi : assignment.second) {
+                    int32_t dist = taxis[taxi].loc.distsq(assignment.first);
+                    if (dist < closest_taxi_dist) {
+                      closest_taxi_dist = dist;
+                      closesttaxi = taxi;
+                    }
+                  }
+                  deduped_target.insert(assignment.first);
+                  deduped_taxi.insert(closesttaxi);
+                  // remove all but the one
+                  for (const int taxi : assignment.second) {
+                    if (taxi == closesttaxi) {
+                      continue;
+                    }
+                    has_assignment[taxi] = false;
+                    is_improved[taxi] = false;
+                  }
+                  assignment.second.clear();
+                  assignment.second.push_back(closesttaxi);
+                }
+              }
+              if (!any_deduped) {
+                break;
+              }
+            }
+
+            for (int otherid = 0; otherid < targets.size(); ++otherid) {
+              if (id == otherid) {
+                continue;
+              }
+              if (targets[otherid].empty()) {
+                continue;
+              }
+              /*if (has_assignment[otherid]) {
+                // we already assigned this before deduping
+                continue;
+              }*/
+              if (deduped_taxi.find(otherid) != deduped_taxi.end()) {
+                continue;
+              }
+              Cost &other_shortest_cost = targets[otherid].front().second;
+              // before the easiest cost was this
+              double other_baseline = baselines[otherid];
+
+              Vec &where_other_ends_up = displaced_locs[otherid];
+              if (!where_other_ends_up.inBounds()) {
+                continue;
+              }
+
+              double max_reduction_for_other = numeric_limits<double>::lowest();
+              for (size_t path_idx = 0; path_idx < targets[otherid].size(); ++path_idx) {
+                if (deduped_target.find(targets[otherid][path_idx].first) != deduped_target.end()) {
+                  // this target was already reserved during deduping
+                  continue;
+                }
+                // now we pay the path variable cost, plus the full cost to actually reach our destination
+                double alternative_cost = alternative_costs[otherid][path_idx];
+                double reduction = other_baseline - alternative_cost;
+                if (reduction > max_reduction_for_other) {
+                  has_assignment[otherid] = true;
+                  is_improved[otherid] = reduction > 0;
+                  assignments[otherid] = path_idx;
+                  max_reduction_for_other = reduction;
+                }
+              }
+              if (max_reduction_for_other >= 0) {
+                Vec &best_target = targets[otherid][assignments[otherid]].first;
+                assignments_to_taxis[best_target].push_back(otherid);
+              }
+
+            }
+
+          }
+
+          for (int otherid = 0; otherid < targets.size(); ++otherid) {
+            if (!has_assignment[otherid]) {
               continue;
             }
-
-            double max_reduction_for_other = numeric_limits<double>::lowest();
-            for (const auto &otherpath : targets[otherid]) {
-              // now we pay the path variable cost, plus the full cost to actually reach our destination
-              double alternative_cost =
-                  path.second.variable + where_other_ends_up.dist(otherpath.first) * (1. + 1. / taxis.size());
-              double reduction = other_baseline - alternative_cost;
-              max_reduction_for_other = std::max(max_reduction_for_other, reduction);
+            if (id == otherid) {
+              continue;
             }
-            if (max_reduction_for_other >= 0) {
+            double alternative_cost = alternative_costs[otherid][assignments[otherid]];
+            double baseline = baselines[otherid];
+            double reduction = baseline - alternative_cost;
+            // note: even if the reduction < 0, it helps for some reason to "vote against" this route.
+            // just make sure not to actually move this taxi.
+            penalty_reduced += reduction;
+            if (is_improved[otherid]) {
               cur_valid_taxis.push_back(otherid);
             }
-            penalty_reduced += max_reduction_for_other;
           }
+
           if (penalty_reduced > most_penalty_reduced) {
             best_displacement = displacement;
             most_penalty_reduced = penalty_reduced;
@@ -817,10 +924,6 @@ class GreedyGroups : public Strategy {
           }
         }
       }
-
-      // TODO: dedup the taxi destinations. this is a little important when taking taxis to zones (can always re-use
-      // a zone), but especially important when when taking taxis to pedestrians and P < T (no need to send 20 to one
-      // guy).
 
       set<int> taxis_to_move(taxis_with_positive_reduction.begin(), taxis_with_positive_reduction.end());
 
@@ -918,10 +1021,10 @@ class GreedyGroups : public Strategy {
     return total;
   }
 
-  map<int, list<pair<Vec, Cost>>> computeClosestZones() {
+  map<int, vector<pair<Vec, Cost>>> computeClosestZones() {
     // for each taxi, computes the closest numClosestTargets targets. For occupied taxis, targets are zones
     // (potentially few); for unoccupied, targets are pedestrians (potentially many).
-    map<int, list<pair<Vec, Cost>>> result;
+    map<int, vector<pair<Vec, Cost>>> result;
     for (const auto &taxi : taxis) {
       auto &closest = result[taxi.id];
 
@@ -944,9 +1047,10 @@ class GreedyGroups : public Strategy {
         auto &top = heap.top();
         double dist = sqrt(static_cast<double>(top.first));
         Cost c = {dist, dist / taxis.size()};
-        closest.emplace_front(top.second, c);
+        closest.emplace_back(top.second, c);
         heap.pop();
       }
+      std::reverse(closest.begin(), closest.end());
     }
     return result;
   }
@@ -1006,16 +1110,20 @@ void run(istream &in, ostream &out) {
   in >> descr;
 
   list<function<unique_ptr<Strategy>()>> strategy_generators = {
-      [&]() { return unique_ptr<Strategy>(new SimpleGreedy(descr)); },
-      [&]() { return unique_ptr<Strategy>(new GreedyGroups(descr, 1)); },
+      //[&]() { return unique_ptr<Strategy>(new SimpleGreedy(descr)); },
+
+      [&]() { return unique_ptr<Strategy>(new GreedyGroups(descr, 5)); },
+
+      /*[&]() { return unique_ptr<Strategy>(new GreedyGroups(descr, 1)); },
       [&]() { return unique_ptr<Strategy>(new GreedyGroups(descr, 2)); },
       [&]() { return unique_ptr<Strategy>(new GreedyGroups(descr, 3)); },
       [&]() { return unique_ptr<Strategy>(new GreedyGroups(descr, 4)); },
-      [&]() { return unique_ptr<Strategy>(new GreedyGroups(descr, 5)); },
-      [&]() { return unique_ptr<Strategy>(new GreedyGroups(descr, 10)); },
-      [&]() { return unique_ptr<Strategy>(new GreedyGroups(descr, 20)); },
+
+
+      [&]() { return unique_ptr<Strategy>(new GreedyGroups(descr, 10)); },*/
+      /*[&]() { return unique_ptr<Strategy>(new GreedyGroups(descr, 20)); },
       [&]() { return unique_ptr<Strategy>(new GreedyGroups(descr, 15)); },
-      [&]() { return unique_ptr<Strategy>(new GreedyGroups(descr, 40)); },
+      [&]() { return unique_ptr<Strategy>(new GreedyGroups(descr, 40)); },*/
   };
   CombinedStrategy strat(descr, strategy_generators);
   Solution sln = strat.run();

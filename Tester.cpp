@@ -173,7 +173,7 @@ ostream &operator<<(ostream &out, Description &descr) {
   }
 }
 
-const int num_testcases = 30;
+const int num_testcases = 1;
 
 class TestcaseGenerator {
  public:
@@ -270,11 +270,12 @@ int main() {
     }
     input << descr;
     string input_copy = input.str();
-    //cout << "input: `" << input_copy << "`" << endl;
+    cout << "input: `" << input_copy << "`" << endl;
     stringstream output_stream;
     run(input, output_stream);
     Solution sln;
     output_stream >> sln;
+    cout << "answer: " << sln << endl;
     double score = 0.0;
     if (verify(sln, descr)) {
       score = computeScore(sln, descr);
